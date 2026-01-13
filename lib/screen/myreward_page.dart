@@ -171,7 +171,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
       // 5. Load available rewards (for My Rewards tab)
       await _loadAvailableRewards();
 
-      // 6. Load available vouchers (for Redeem Voucher tab)
+      // 6. Load available vouchers (for Redeem Voucher tab) - NOW WITH POINTS FILTER
       await _loadAvailableVouchers();
 
       // 7. Load claimed rewards (kept for points history)
@@ -306,7 +306,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
     }
   }
 
-  // Load available vouchers specifically for Redeem tab
+  // Load available vouchers specifically for Redeem tab - UPDATED WITH POINTS FILTER
   Future<void> _loadAvailableVouchers() async {
     if (_currentUserId == null) return;
 
@@ -358,6 +358,16 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
           expiryDate = DateTime.now().add(const Duration(days: 30));
         }
         
+        // Get points cost
+        final pointsCost = (data['pointsRequired'] as int? ?? 0);
+        
+        // CHECK IF USER HAS ENOUGH POINTS - NEW FILTER
+        final userHasEnoughPoints = _userData['totalPoints'] >= pointsCost;
+        if (!userHasEnoughPoints) {
+          print('      ❌ User has ${_userData['totalPoints']} points, needs $pointsCost - skipping');
+          continue;
+        }
+        
         // Check if user has already claimed this voucher
         final userClaims = await _firestore
             .collection('rewards_claimed')
@@ -375,7 +385,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
           _availableVouchers.add({
             'id': doc.id,
             'name': data['name'] ?? 'Voucher',
-            'points': data['pointsRequired'] ?? 0,
+            'points': pointsCost,
             'type': 'voucher',
             'category': data['category'] ?? 'General',
             'description': data['description'] ?? '',

@@ -16,7 +16,7 @@ class PointsHistoryWidget extends StatefulWidget {
 
 class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
   String _selectedFilter = 'All';
-  final List<String> _filterOptions = ['All', 'Earned', 'Redeemed', 'Bonus', 'Voucher Used'];
+  final List<String> _filterOptions = ['All', 'Earned', 'Redeemed', 'Bonus']; // Removed 'Voucher Used'
 
   List<Map<String, dynamic>> get _filteredHistory {
     if (_selectedFilter == 'All') {
@@ -34,9 +34,7 @@ class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
       case 'Bonus':
         filterType = 'bonus';
         break;
-      case 'Voucher Used':
-        filterType = 'voucher_used';
-        break;
+      // Removed 'Voucher Used' case
       default:
         return widget.pointsHistory;
     }
@@ -65,7 +63,7 @@ class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
       case 'bonus':
         return Icons.star_outline;
       case 'voucher_used':
-        return Icons.local_offer_outlined;
+        return Icons.local_offer_outlined; // Keep icon for when shown in "All" tab
       default:
         return Icons.info_outline;
     }
@@ -80,7 +78,7 @@ class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
       case 'bonus':
         return Colors.orange;
       case 'voucher_used':
-        return Colors.blue;
+        return Colors.blue; // Keep color for when shown in "All" tab
       default:
         return Colors.grey;
     }
@@ -95,7 +93,7 @@ class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
       case 'bonus':
         return 'Bonus';
       case 'voucher_used':
-        return 'Used';
+        return 'Used'; // Keep display name for when shown in "All" tab
       default:
         return 'Unknown';
     }
@@ -345,7 +343,7 @@ class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Filter buttons
+        // Filter buttons - Now only 4 options
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -367,9 +365,7 @@ class _PointsHistoryWidgetState extends State<PointsHistoryWidget> {
                   case 'Bonus':
                     filterType = 'bonus';
                     break;
-                  case 'Voucher Used':
-                    filterType = 'voucher_used';
-                    break;
+                  // Removed 'Voucher Used' case
                   default:
                     filterType = '';
                 }
