@@ -84,6 +84,10 @@ class _HomePageState extends State<HomePage> {
   // Get user data using helper class
   getUserData() async {
     Map<String, dynamic>? user = await UserSession.getUser();
+    print('=== USER SESSION DATA ===');
+    print(user);
+    print('==========================');
+    
     setState(() {
       userData = user;
       isLoading = false;
@@ -115,6 +119,11 @@ class _HomePageState extends State<HomePage> {
   String get idNumber => userData?['id_number'] ?? 'Not provided';
   String get bloodType => userData?['blood_group'] ?? 'Not provided';
   String get qrCode => userData?['qr_code_data'] ?? '';
+  String get userId => userData?['user_id'] ?? 
+                      userData?['userId'] ?? 
+                      userData?['uid'] ?? 
+                      userData?['id'] ?? 
+                      '';
 
   // Add timers for auto-sliding
   // ignore: unused_field
@@ -255,7 +264,7 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
             const SnackBar(
               content: Text('No blood bank locations available. Please check your connection.'),
               backgroundColor: Colors.orange,
-              duration: Duration(seconds: 3),
+              duration: const Duration(seconds: 3),
             ),
           );
         }
@@ -484,16 +493,112 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // SECTION: Digital Donor Card Widget (Home Screen)
+  // ---------------------------------------------------------------------------
+  // This method builds the card seen on the home screen.
+  // It handles the tap event to trigger the detailed popup.
   Widget _buildDonorCard() {
     return DigitalDonorCardWidget(
       showQrCode: true,
+      // When the user taps the card, we call _showDonorCardDetails to open the popup
       onTap: () {
         _showDonorCardDetails(context);
       },
     );
   }
 
-  void _showDonorCardDetails(BuildContext context) {
+  // ---------------------------------------------------------------------------
+  // SECTION: Digital Donor Card Popup Implementation
+  // ---------------------------------------------------------------------------
+  // This function displays the detailed popup dialog when the card is clicked.
+  void _showDonorCardDetails(BuildContext context) async {
+    String lastDonationText = 'No donations yet';
+    
+    print('=== DEBUG: Donor Card Clicked ===');
+    print('User data: $userData');
+    print('User ID from getter: $userId');
+    
+    // DEBUG: Check all possible ID sources
+    print('=== ID DEBUG INFO ===');
+    print('QR Code: $qrCode');
+    print('User ID from getter: "$userId" (length: ${userId.length})');
+    print('User Data keys: ${userData?.keys.toList()}');
+    
+    // Try multiple methods to get user ID
+    String effectiveUserId = '';
+    
+    // Method 1: Use the getter (existing method)
+    if (userId.isNotEmpty) {
+      effectiveUserId = userId;
+      print('✅ Using user ID from getter: $effectiveUserId');
+    } 
+    // Method 2: Extract from QR code
+    else if (qrCode.isNotEmpty && qrCode.contains('BLOODCONNECT:USER:')) {
+      effectiveUserId = qrCode.replaceFirst('BLOODCONNECT:USER:', '');
+      print('✅ Using user ID from QR code: $effectiveUserId');
+    }
+    // Method 3: Check userData directly for various possible fields
+    else if (userData != null) {
+      // Check all possible field names that might contain the user ID
+      final possibleIdFields = ['user_id', 'userId', 'uid', 'id', 'donor_id'];
+      for (var field in possibleIdFields) {
+        if (userData![field] != null) {
+          effectiveUserId = userData![field].toString();
+          print('✅ Found user ID in $field: $effectiveUserId');
+          break;
+        }
+      }
+    }
+    
+    if (effectiveUserId.isEmpty) {
+      print('❌ Could not find any user ID!');
+      print('   QR Code contains: ${qrCode.contains('BLOODCONNECT:USER:')}');
+      print('   userData is null: ${userData == null}');
+    } else {
+      print('🔍 Will query with effectiveUserId: $effectiveUserId');
+    }
+    
+    if (effectiveUserId.isNotEmpty) {
+      try {
+        print('📋 Fetching donations for user ID: $effectiveUserId');
+        final lastDonationDate = await _getLastDonationDate(effectiveUserId);
+        
+        if (lastDonationDate != null) {
+          print('✅ Found donation: $lastDonationDate');
+          lastDonationText = '${lastDonationDate.day}/${lastDonationDate.month}/${lastDonationDate.year}';
+        } else {
+          print('❌ No donations found for user ID: $effectiveUserId');
+          
+          // Additional debug: Try to find ANY donations for this user
+          try {
+            final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+            final testQuery = await _firestore
+                .collection('donations')
+                .where('donor_id', isEqualTo: effectiveUserId)
+                .get();
+            
+            print('🔍 Test query found ${testQuery.docs.length} documents');
+            for (var doc in testQuery.docs) {
+              print('   - Document ID: ${doc.id}');
+              print('     donor_id: ${doc.data()['donor_id']}');
+              print('     status: ${doc.data()['status']}');
+              print('     donation_date: ${doc.data()['donation_date']}');
+            }
+          } catch (e) {
+            print('❌ Error in test query: $e');
+          }
+        }
+      } catch (e) {
+        print('❌ Error fetching last donation: $e');
+        lastDonationText = 'Error loading';
+      }
+    } else {
+      print('❌ No user ID available for donation query');
+    }
+    
+    print('📝 Final last donation text: $lastDonationText');
+    
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -518,7 +623,7 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
                   ),
                 ),
                 const SizedBox(height: 20),
-                // Large QR Code from session
+
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -527,7 +632,7 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
                     border: Border.all(color: Colors.grey.shade300),
                   ),
                   child: QrImageView(
-                    data: qrCode, // <-- Use session QR directly
+                    data: qrCode,
                     version: QrVersions.auto,
                     size: 200,
                     backgroundColor: Colors.white,
@@ -535,7 +640,7 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
                   ),
                 ),
                 const SizedBox(height: 20),
-                // Donor Details (keep the existing strings)
+
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -550,7 +655,7 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
                           const Text('Name:', style: TextStyle(fontWeight: FontWeight.bold)),
                           Flexible(
                             child: Text(
-                              fullName, // <-- still use session fullName
+                              fullName,
                               textAlign: TextAlign.right,
                               style: const TextStyle(fontSize: 14),
                             ),
@@ -562,7 +667,7 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text('ID:', style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text(idNumber), // <-- still use session ID
+                          Text(idNumber),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -579,15 +684,16 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
                       const SizedBox(height: 8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: const [
-                          Text('Last Donation:', style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text('No donations yet'),
+                        children: [
+                          const Text('Last Donation:', style: TextStyle(fontWeight: FontWeight.bold)),
+                          Text(lastDonationText),
                         ],
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 20),
+
                 ElevatedButton(
                   onPressed: () => Navigator.of(context).pop(),
                   style: ElevatedButton.styleFrom(
@@ -605,6 +711,101 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
         );
       },
     );
+  }
+
+  Future<DateTime?> _getLastDonationDate(String userId) async {
+    try {
+      final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+      
+      print('🔍 [GET LAST DONATION] Querying donations for donor_id: "$userId"');
+      print('🔍 User ID length: ${userId.length}');
+      print('🔍 User ID type: ${userId.runtimeType}');
+      
+      // First, try a simple query without status filter
+      final testQuery = await _firestore
+          .collection('donations')
+          .where('donor_id', isEqualTo: userId)
+          .get();
+      
+      print('🔍 Simple query found ${testQuery.docs.length} documents');
+      if (testQuery.docs.isNotEmpty) {
+        for (var doc in testQuery.docs) {
+          final data = doc.data();
+          print('   📄 Document: ${doc.id}');
+          print('     donor_id: ${data['donor_id']}');
+          print('     status: ${data['status']}');
+          print('     donation_date: ${data['donation_date']}');
+          print('     amount_ml: ${data['amount_ml']}');
+        }
+      } else {
+        print('❌ No documents found with donor_id: "$userId"');
+        print('⚠️ Checking if collection exists...');
+        
+        // Check if donations collection has any documents
+        final collectionCheck = await _firestore
+            .collection('donations')
+            .limit(1)
+            .get();
+        print('   Donations collection exists: ${collectionCheck.docs.isNotEmpty}');
+      }
+      
+      // Now try the actual query with status filter
+      print('🔍 [MAIN QUERY] Searching with status filter...');
+      final querySnapshot = await _firestore
+          .collection('donations')
+          .where('donor_id', isEqualTo: userId)
+          .where('status', whereIn: ['stored', 'completed'])
+          .orderBy('donation_date', descending: true)
+          .limit(1)
+          .get();
+
+      print('🔍 Main query returned ${querySnapshot.docs.length} documents');
+      
+      if (querySnapshot.docs.isEmpty) {
+        print('❌ No donations found with donor_id: "$userId" and status "stored" or "completed"');
+        return null;
+      }
+
+      final donationData = querySnapshot.docs.first.data() as Map<String, dynamic>;
+      print('✅ Found donation data!');
+      print('   Document keys: ${donationData.keys.toList()}');
+      
+      final donationDate = donationData['donation_date'];
+      print('🔍 Donation date field type: ${donationDate.runtimeType}');
+      print('🔍 Donation date value: $donationDate');
+      
+      if (donationDate is Timestamp) {
+        final date = donationDate.toDate();
+        print('✅ Converted to DateTime: $date');
+        return date;
+      } else if (donationDate is DateTime) {
+        print('✅ Already DateTime: $donationDate');
+        return donationDate;
+      } else if (donationDate is String) {
+        print('⚠️ Donation date is String, trying to parse');
+        try {
+          final date = DateTime.parse(donationDate);
+          print('✅ Parsed from String: $date');
+          return date;
+        } catch (e) {
+          print('❌ Failed to parse date string: $e');
+        }
+      }
+      
+      print('❌ Unexpected date type: ${donationDate.runtimeType}');
+      return null;
+    } catch (e, stackTrace) {
+      print('❌ Error fetching last donation: $e');
+      print('Stack trace: $stackTrace');
+      
+      // Check if it's an index error
+      if (e.toString().contains('index')) {
+        print('⚠️ This might be a Firestore index error');
+        print('⚠️ Try creating index for: donations/donor_id/status/donation_date');
+      }
+      
+      return null;
+    }
   }
 
   Widget _buildBloodStock() {
@@ -1085,87 +1286,6 @@ final announcements = await AnnouncementDataService.getActiveAnnouncements();
           ),
         ],
       ),
-    );
-  }
-
-  void _showAnnouncementDetails(Map<String, dynamic> announcement) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.water_drop,
-                      color: Color(0xFFDE0D0D),
-                      size: 24,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'BloodConnect',
-                      style: TextStyle(
-                        color: Color(0xFFDE0D0D),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  announcement['title'] ?? 'No Title',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFFDE0D0D),
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  announcement['content'] ?? 'No content',
-                  style: const TextStyle(fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  _formatDate(announcement['date']),
-                  style: TextStyle(
-                    fontStyle: FontStyle.italic,
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFDE0D0D),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text('Close'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 

@@ -286,9 +286,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String get dateOfBirth => donorData?['birth_date'] ?? 'Not provided';
   
   // Toggle states for notification preferences
-  bool receiveUpdates = true;
-  bool bloodShortageAlerts = true;
-  bool locationServices = true;
+
   
   // Selected nav index - Profile is at index 4
   final int _selectedNavIndex = 4;
@@ -1011,53 +1009,6 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              "Settings & Preferences",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Notification toggle
-            _buildToggleSetting(
-              "Notifications",
-              "Receive updates about donations",
-              receiveUpdates,
-              (value) {
-                setState(() {
-                  receiveUpdates = value;
-                });
-              },
-            ),
-            
-            // Blood shortage alerts toggle
-            _buildToggleSetting(
-              "Blood Shortage Alerts", 
-              "Be notified of urgent blood needs",
-              bloodShortageAlerts,
-              (value) {
-                setState(() {
-                  bloodShortageAlerts = value;
-                });
-              },
-            ),
-            
-            // Location services toggle
-            _buildToggleSetting(
-              "Location Services",
-              "Find donation centers near you",
-              locationServices,
-              (value) {
-                setState(() {
-                  locationServices = value;
-                });
-              },
-            ),
-            
-            const SizedBox(height: 16),
-            
             // Change password button
             SizedBox(
               width: double.infinity,
@@ -1091,46 +1042,7 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // Toggle setting row
-  Widget _buildToggleSetting(String title, String subtitle, bool value, Function(bool) onChanged) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: Colors.white,
-            activeTrackColor: const Color(0xFFDE0D0D),
-            inactiveThumbColor: Colors.white,
-            inactiveTrackColor: Colors.grey[300],
-          ),
-        ],
-      ),
-    );
-  }
+
 
   // Account action buttons (Delete Account, Log Out)
   Widget _buildAccountActionButtons() {

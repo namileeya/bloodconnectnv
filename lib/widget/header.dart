@@ -27,7 +27,7 @@ class CustomHeader extends StatelessWidget implements PreferredSizeWidget {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  const CustomHeader({
+  CustomHeader({
     super.key,
     this.appName = 'BloodConnect',
     this.userInitials,

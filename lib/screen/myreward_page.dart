@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'notification_page.dart';
 import '../widget/redeem_voucher.dart';
-import '../widget/used_voucher.dart';
 import '../widget/points_history.dart';
 import '../widget/header.dart';
 import '../widget/bottom_navigation_bar.dart';
@@ -48,7 +47,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this); // Changed to 3 tabs
     _loadUserData();
   }
 
@@ -136,33 +135,50 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
           .get();
 
       final totalDonations = donationsSnapshot.docs.length;
-      final totalPoints = totalDonations * 10; // 10 points per donation
+      
+      // 3. Load claimed rewards to calculate used points
+      final claimedRewardsSnapshot = await _firestore
+          .collection('rewards_claimed')
+          .where('userId', isEqualTo: _currentUserId)
+          .get();
+      
+      int totalUsedPoints = 0;
+      for (var doc in claimedRewardsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        totalUsedPoints += (data['pointUsed'] as int? ?? 0);
+      }
+      
+      // Calculate available points: (donations * 10) - points used
+      final earnedPoints = totalDonations * 10;
+      final availablePoints = earnedPoints - totalUsedPoints;
+      
       final lastDonation = totalDonations > 0 
           ? (donationsSnapshot.docs.first.data()['donation_date'] as Timestamp).toDate()
           : null;
 
-      _userData['totalPoints'] = totalPoints;
+      _userData['totalPoints'] = availablePoints > 0 ? availablePoints : 0;
       _userData['lifetimeDonations'] = totalDonations;
       _userData['lastDonationDate'] = lastDonation != null
           ? DateFormat('yyyy-MM-dd').format(lastDonation)
           : 'Never';
 
-      print('✅ Donations: $totalDonations, Points: $totalPoints');
+      print('✅ Donations: $totalDonations, Earned Points: $earnedPoints');
+      print('✅ Used Points: $totalUsedPoints, Available Points: ${_userData['totalPoints']}');
 
-      // 3. DEBUG: Test rewards collection first
+      // 4. DEBUG: Test rewards collection first
       await _debugCheckRewardsCollection();
 
-      // 4. Load available rewards (for My Rewards tab)
+      // 5. Load available rewards (for My Rewards tab)
       await _loadAvailableRewards();
 
-      // 5. Load available vouchers (for Redeem Voucher tab)
+      // 6. Load available vouchers (for Redeem Voucher tab)
       await _loadAvailableVouchers();
 
-      // 6. Load claimed rewards (for Used Voucher tab)
+      // 7. Load claimed rewards (kept for points history)
       await _loadClaimedRewards();
 
-      // 7. Generate points history
-      await _generatePointsHistory(donationsSnapshot.docs);
+      // 8. Generate points history
+      await _generatePointsHistory(donationsSnapshot.docs, claimedRewardsSnapshot.docs);
 
     } catch (e) {
       print('❌ Error loading user data: $e');
@@ -189,31 +205,21 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
         return;
       }
       
-      // Print first 3 documents to see structure
-      for (int i = 0; i < allRewards.docs.length && i < 3; i++) {
+      // Print all documents to see structure
+      for (int i = 0; i < allRewards.docs.length; i++) {
         final doc = allRewards.docs[i];
         final data = doc.data() as Map<String, dynamic>;
         
         print('\n═══════════════════════════════════════════════════');
-        print('📋 Document ${i + 1}: ${doc.id}');
+        print('📋 Document ${i + 1}: ${doc.id} - ${data['name']}');
         print('═══════════════════════════════════════════════════');
         
-        // Print ALL fields in the document
-        data.forEach((key, value) {
-          print('   $key: $value (Type: ${value.runtimeType})');
-        });
-        
-        // Check critical fields
-        print('\n🔑 Critical field checks:');
-        print('   Has "name" field: ${data.containsKey('name')}');
-        print('   Has "isActive" field: ${data.containsKey('isActive')}');
-        print('   Has "expiryDate" field: ${data.containsKey('expiryDate')}');
-        print('   Has "pointsRequired" field: ${data.containsKey('pointsRequired')}');
-        print('   Has "type" field: ${data.containsKey('type')}');
-        
-        if (data.containsKey('isActive')) {
-          print('   isActive value: ${data['isActive']}');
-        }
+        // Print important fields
+        print('   name: ${data['name']}');
+        print('   isActive: ${data['isActive']}');
+        print('   type: ${data['type']}');
+        print('   pointsRequired: ${data['pointsRequired']}');
+        print('   maxClaimsPerUser: ${data['maxClaimsPerUser']}');
         
         if (data.containsKey('expiryDate') && data['expiryDate'] != null) {
           try {
@@ -237,130 +243,62 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
   // Load available rewards from Firebase
   Future<void> _loadAvailableRewards() async {
     try {
-      print('🔄 Loading available rewards with query...');
+      print('🔄 Loading available rewards...');
       
       final now = DateTime.now();
       print('   Current time: $now');
       
-      // First try: Strict query
-      print('\n🔍 Trying strict query (isActive == true, expiryDate > now)...');
-      try {
-        final rewardsSnapshot = await _firestore
-            .collection('rewards')
-            .where('isActive', isEqualTo: true)
-            .where('expiryDate', isGreaterThan: Timestamp.fromDate(now))
-            .get();
+      // Get all active, non-expired rewards
+      final rewardsSnapshot = await _firestore
+          .collection('rewards')
+          .where('isActive', isEqualTo: true)
+          .get();
 
-        print('   Strict query returned: ${rewardsSnapshot.docs.length} documents');
+      print('   Found ${rewardsSnapshot.docs.length} active rewards');
+      
+      _redeemableRewards = [];
+      
+      for (var doc in rewardsSnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
         
-        if (rewardsSnapshot.docs.isEmpty) {
-          print('   ⚠️ No results with strict query. Trying relaxed queries...');
-          
-          // Try without expiry filter
-          final noExpirySnapshot = await _firestore
-              .collection('rewards')
-              .where('isActive', isEqualTo: true)
-              .get();
-          print('   Query without expiry filter: ${noExpirySnapshot.docs.length} documents');
-          
-          // Try without isActive filter
-          final noActiveSnapshot = await _firestore
-              .collection('rewards')
-              .where('expiryDate', isGreaterThan: Timestamp.fromDate(now))
-              .get();
-          print('   Query without isActive filter: ${noActiveSnapshot.docs.length} documents');
-          
-          // Try getting ALL rewards
-          final allSnapshot = await _firestore.collection('rewards').get();
-          print('   All rewards (no filters): ${allSnapshot.docs.length} documents');
-          
-          // Use all rewards as fallback
-          _redeemableRewards = allSnapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            DateTime? expiryDate;
-            
-            try {
-              if (data['expiryDate'] != null) {
-                expiryDate = (data['expiryDate'] as Timestamp).toDate();
-              }
-            } catch (e) {
-              print('      Error parsing expiryDate for ${data['name']}: $e');
-              expiryDate = DateTime.now().add(const Duration(days: 30));
-            }
-            
-            return {
-              'id': doc.id,
-              'name': data['name'] ?? 'Unnamed Reward',
-              'points': data['pointsRequired'] ?? data['points'] ?? 0,
-              'type': data['type'] ?? 'voucher',
-              'category': data['category'] ?? 'General',
-              'description': data['description'] ?? '',
-              'expiryDate': expiryDate ?? DateTime.now().add(const Duration(days: 30)),
-              'available': true,
-              'stock': data['maxClaimsPerUser'] ?? 1,
-              'discountValue': data['discountValue'] ?? 0,
-              'icon': _getIconForReward(data),
-            };
-          }).toList();
-          
-          print('   Using ALL rewards as fallback: ${_redeemableRewards.length} items');
-        } else {
-          // Use results from strict query
-          _redeemableRewards = rewardsSnapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final expiryDate = (data['expiryDate'] as Timestamp).toDate();
-            
-            return {
-              'id': doc.id,
-              'name': data['name'] ?? 'Reward',
-              'points': data['pointsRequired'] ?? 0,
-              'type': data['type'] ?? 'voucher',
-              'category': data['category'] ?? 'General',
-              'description': data['description'] ?? '',
-              'expiryDate': expiryDate,
-              'available': true,
-              'stock': data['maxClaimsPerUser'] ?? 1,
-              'discountValue': data['discountValue'] ?? 0,
-              'icon': _getIconForReward(data),
-            };
-          }).toList();
-          
-          print('   Using strict query results: ${_redeemableRewards.length} items');
-        }
-      } catch (e) {
-        print('   ❌ Error in strict query: $e');
+        // Check if reward is expired
+        bool isExpired = false;
+        DateTime? expiryDate;
         
-        // Fallback: Get all rewards
-        final allSnapshot = await _firestore.collection('rewards').get();
-        _redeemableRewards = allSnapshot.docs.map((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          DateTime? expiryDate;
-          
+        if (data['expiryDate'] != null) {
           try {
-            if (data['expiryDate'] != null) {
-              expiryDate = (data['expiryDate'] as Timestamp).toDate();
-            }
+            expiryDate = (data['expiryDate'] as Timestamp).toDate();
+            isExpired = expiryDate.isBefore(now);
           } catch (e) {
+            print('   ❌ Error parsing expiryDate for ${data['name']}: $e');
             expiryDate = DateTime.now().add(const Duration(days: 30));
           }
-          
-          return {
+        } else {
+          expiryDate = DateTime.now().add(const Duration(days: 30));
+        }
+        
+        // Only show non-expired rewards
+        if (!isExpired) {
+          _redeemableRewards.add({
             'id': doc.id,
-            'name': data['name'] ?? 'Reward',
-            'points': data['pointsRequired'] ?? data['points'] ?? 0,
+            'name': data['name'] ?? 'Unnamed Reward',
+            'points': data['pointsRequired'] ?? 0,
             'type': data['type'] ?? 'voucher',
             'category': data['category'] ?? 'General',
             'description': data['description'] ?? '',
-            'expiryDate': expiryDate ?? DateTime.now().add(const Duration(days: 30)),
+            'expiryDate': expiryDate!,
             'available': true,
             'stock': data['maxClaimsPerUser'] ?? 1,
             'discountValue': data['discountValue'] ?? 0,
             'icon': _getIconForReward(data),
-          };
-        }).toList();
-        
-        print('   Using fallback (all rewards): ${_redeemableRewards.length} items');
+          });
+          print('   ✅ Added to available rewards: ${data['name']}');
+        } else {
+          print('   ❌ Skipping expired reward: ${data['name']}');
+        }
       }
+
+      print('✅ Available rewards: ${_redeemableRewards.length} items');
 
     } catch (e) {
       print('❌ Error loading rewards: $e');
@@ -377,37 +315,48 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
       
       final now = DateTime.now();
       
-      // Try multiple query approaches
-      QuerySnapshot vouchersSnapshot;
+      // Get all active rewards of type voucher
+      final vouchersSnapshot = await _firestore
+          .collection('rewards')
+          .where('isActive', isEqualTo: true)
+          .get();
       
-      try {
-        // First try strict query
-        vouchersSnapshot = await _firestore
-            .collection('rewards')
-            .where('isActive', isEqualTo: true)
-            .where('expiryDate', isGreaterThan: Timestamp.fromDate(now))
-            .where('type', isEqualTo: 'voucher')
-            .get();
-            
-        print('   Strict voucher query: ${vouchersSnapshot.docs.length} results');
-      } catch (e) {
-        print('   ❌ Strict query failed: $e');
-        
-        // Fallback: Get all vouchers
-        vouchersSnapshot = await _firestore
-            .collection('rewards')
-            .where('type', isEqualTo: 'voucher')
-            .get();
-            
-        print('   Fallback voucher query: ${vouchersSnapshot.docs.length} results');
-      }
+      print('   Found ${vouchersSnapshot.docs.length} active rewards');
       
       _availableVouchers = [];
       
       for (var doc in vouchersSnapshot.docs) {
         final data = doc.data() as Map<String, dynamic>;
         
+        // Check if it's a voucher type
+        final type = data['type']?.toString().toLowerCase() ?? 'voucher';
+        if (type != 'voucher') {
+          print('   Skipping non-voucher: ${data['name']} (type: $type)');
+          continue;
+        }
+        
         print('   Processing voucher: ${data['name']} (ID: ${doc.id})');
+        
+        // Check expiry date
+        bool isExpired = false;
+        DateTime expiryDate;
+        
+        if (data['expiryDate'] != null) {
+          try {
+            expiryDate = (data['expiryDate'] as Timestamp).toDate();
+            isExpired = expiryDate.isBefore(now);
+            if (isExpired) {
+              print('      ❌ Voucher expired: $expiryDate');
+              continue;
+            }
+          } catch (e) {
+            print('      ❌ Error parsing expiryDate: $e');
+            continue;
+          }
+        } else {
+          print('      ⚠️ No expiry date, using default');
+          expiryDate = DateTime.now().add(const Duration(days: 30));
+        }
         
         // Check if user has already claimed this voucher
         final userClaims = await _firestore
@@ -416,35 +365,25 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
             .where('rewardId', isEqualTo: doc.id)
             .get();
 
-        final maxClaims = data['maxClaimsPerUser'] ?? 1;
+        final maxClaims = (data['maxClaimsPerUser'] as int? ?? 1);
         final userClaimCount = userClaims.docs.length;
         final canClaim = userClaimCount < maxClaims;
 
         print('      Max claims: $maxClaims, User claims: $userClaimCount, Can claim: $canClaim');
         
         if (canClaim) {
-          DateTime expiryDate;
-          try {
-            if (data['expiryDate'] != null) {
-              expiryDate = (data['expiryDate'] as Timestamp).toDate();
-            } else {
-              expiryDate = DateTime.now().add(const Duration(days: 30));
-            }
-          } catch (e) {
-            expiryDate = DateTime.now().add(const Duration(days: 30));
-          }
-          
           _availableVouchers.add({
             'id': doc.id,
             'name': data['name'] ?? 'Voucher',
-            'points': data['pointsRequired'] ?? data['points'] ?? 0,
-            'type': data['type'] ?? 'voucher',
+            'points': data['pointsRequired'] ?? 0,
+            'type': 'voucher',
             'category': data['category'] ?? 'General',
             'description': data['description'] ?? '',
             'expiryDate': expiryDate,
             'discountValue': data['discountValue'] ?? 0,
             'maxClaims': maxClaims,
             'userClaims': userClaimCount,
+            'isActive': data['isActive'] ?? true,
           });
           print('      ✅ Added to available vouchers');
         } else {
@@ -460,7 +399,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
     }
   }
 
-  // Load claimed rewards from Firebase
+  // Load claimed rewards from Firebase (kept for points history)
   Future<void> _loadClaimedRewards() async {
     if (_currentUserId == null) return;
 
@@ -537,7 +476,10 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
   }
 
   // Generate points history from donations and claimed rewards
-  Future<void> _generatePointsHistory(List<QueryDocumentSnapshot> donationDocs) async {
+  Future<void> _generatePointsHistory(
+    List<QueryDocumentSnapshot> donationDocs,
+    List<QueryDocumentSnapshot> claimedDocs,
+  ) async {
     final List<Map<String, dynamic>> history = [];
 
     // Add donation points
@@ -559,35 +501,51 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
     }
 
     // Add redemption points from claimed rewards
-    for (var voucher in _redeemedVouchers) {
-      final redeemedDate = DateTime.parse(voucher['redeemedDate']);
-      final isUsed = voucher['status'] == 'used';
+    for (var doc in claimedDocs) {
+      final data = doc.data() as Map<String, dynamic>;
+      final redeemedDate = (data['claimedAt'] as Timestamp).toDate();
+      final isUsed = data['status'] == 'used';
+      
+      // Get reward name
+      String rewardName = 'Reward';
+      final rewardId = data['rewardId'];
+      if (rewardId != null) {
+        try {
+          final rewardDoc = await _firestore.collection('rewards').doc(rewardId).get();
+          if (rewardDoc.exists) {
+            final rewardData = rewardDoc.data() as Map<String, dynamic>;
+            rewardName = rewardData['name'] ?? 'Reward';
+          }
+        } catch (e) {
+          print('Error loading reward name for history: $e');
+        }
+      }
       
       // Redemption entry
       history.add({
-        'id': 'redeem_${voucher['id']}',
-        'date': voucher['redeemedDate'],
-        'description': 'Redeemed ${voucher['name']}',
-        'points': '-${voucher['originalPoints']}',
+        'id': 'redeem_${doc.id}',
+        'date': DateFormat('yyyy-MM-dd').format(redeemedDate),
+        'description': 'Redeemed $rewardName',
+        'points': '-${data['pointUsed'] ?? 0}',
         'type': 'redeemed',
-        'relatedId': voucher['id'],
+        'relatedId': doc.id,
         'category': 'Reward Redemption',
         'userId': _currentUserId,
         'timestamp': redeemedDate,
       });
 
       // Usage entry (if used)
-      if (isUsed && voucher['usedDate'] != null) {
+      if (isUsed && data['usedDate'] != null) {
         history.add({
-          'id': 'use_${voucher['id']}',
-          'date': voucher['usedDate'],
-          'description': 'Used ${voucher['name']}',
+          'id': 'use_${doc.id}',
+          'date': data['usedDate'],
+          'description': 'Used $rewardName',
           'points': '0',
           'type': 'voucher_used',
-          'relatedId': voucher['id'],
+          'relatedId': doc.id,
           'category': 'Reward Usage',
           'userId': _currentUserId,
-          'timestamp': DateTime.parse(voucher['usedDate']),
+          'timestamp': DateTime.parse(data['usedDate']),
         });
       }
     }
@@ -752,7 +710,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
           'timestamp': now,
         });
         
-        // Update points
+        // Update points by deducting from total
         _userData['totalPoints'] = _userData['totalPoints'] - pointsCost;
       });
 
@@ -765,48 +723,6 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
     } catch (e) {
       print('Error redeeming voucher: $e');
       _showErrorSnackBar('Failed to redeem voucher: $e');
-    }
-  }
-
-  // Handle voucher usage
-  Future<void> _handleVoucherUsage(String voucherId) async {
-    try {
-      final now = DateTime.now();
-      final currentDate = DateFormat('yyyy-MM-dd').format(now);
-      
-      // Update in Firebase
-      await _firestore.collection('rewards_claimed').doc(voucherId).update({
-        'status': 'used',
-        'usedDate': currentDate,
-      });
-
-      // Update local state
-      final voucherIndex = _redeemedVouchers.indexWhere((v) => v['id'] == voucherId);
-      if (voucherIndex != -1) {
-        setState(() {
-          _redeemedVouchers[voucherIndex]['status'] = 'used';
-          _redeemedVouchers[voucherIndex]['usedDate'] = currentDate;
-          
-          // Add to points history
-          _pointsHistory.insert(0, {
-            'id': 'use_${now.millisecondsSinceEpoch}',
-            'date': currentDate,
-            'description': 'Used ${_redeemedVouchers[voucherIndex]['name']}',
-            'points': '0',
-            'type': 'voucher_used',
-            'relatedId': voucherId,
-            'category': 'Voucher Usage',
-            'userId': _currentUserId,
-            'timestamp': now,
-          });
-        });
-
-        _showSuccessSnackBar('Voucher marked as used!');
-      }
-
-    } catch (e) {
-      print('Error updating voucher status: $e');
-      _showErrorSnackBar('Failed to update voucher status: $e');
     }
   }
 
@@ -855,6 +771,8 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
         'status': 'active',
         'usedDate': null,
         'voucherCode': 'BC${now.millisecondsSinceEpoch.toString().substring(0, 6)}',
+        'partnerStore': rewardData['partnerStore'] ?? 'BloodConnect Partner',
+        'minPurchase': rewardData['minPurchase'] ?? 'N/A',
       };
 
       await _firestore.collection('rewards_claimed').add(claimedReward);
@@ -898,7 +816,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
           'timestamp': now,
         });
         
-        // Update points
+        // Update points by deducting from total
         _userData['totalPoints'] = _userData['totalPoints'] - reward['points'];
       });
 
@@ -1433,11 +1351,6 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
           onRedeem: _handleVoucherRedemption,
         );
       case 2:
-        return UsedVoucherWidget(
-          redeemedVouchers: _redeemedVouchers,
-          onVoucherUsed: _handleVoucherUsage,
-        );
-      case 3:
         return PointsHistoryWidget(
           pointsHistory: _pointsHistory,
           formatDescription: (description) {
@@ -1635,7 +1548,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
             ),
           ),
           
-          // Tab selector
+          // Tab selector - NOW 3 TABS
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Container(
@@ -1647,8 +1560,7 @@ class _MyRewardPageState extends State<MyRewardPage> with TickerProviderStateMix
                 children: [
                   _buildTabButton('My Rewards', 0),
                   _buildTabButton('Redeem\nVoucher', 1),
-                  _buildTabButton('Used\nVoucher', 2),
-                  _buildTabButton('Points\nHistory', 3),
+                  _buildTabButton('Points\nHistory', 2), // Changed from Used Voucher to Points History
                 ],
               ),
             ),
